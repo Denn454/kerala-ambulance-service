@@ -1,0 +1,149 @@
+// Kerala Emergency Ambulance Platform — Data Model (Phase 1)
+// Dev default: SQLite (zero setup). For production, switch provider to
+// "postgresql" and set DATABASE_URL to a real Postgres connection string.
+// See README.md → "Moving to Postgres for production".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("ADMIN") // ADMIN | SUPERADMIN
+  createdAt    DateTime @default(now())
+
+  claimedEmergencies EmergencyRequest[]
+  auditLogs          AuditLog[]
+}
+
+model EmergencyRequest {
+  id          String   @id @default(cuid())
+  displayId   String   @unique // e.g. EMG-2026-000001, generated server-side
+  status      String   @default("NEW")
+
+  // Caller-supplied, one-time location capture (never continuously tracked)
+  latitude    Float?
+  longitude   Float?
+  accuracy    Float?
+  callerPhone String?
+  notes       String?
+
+  // Optimistic locking to prevent two admins double-assigning the same case
+  version     Int      @default(0)
+
+  claimedById String?
+  claimedBy   Admin?   @relation(fields: [claimedById], references: [id])
+  claimedAt   DateTime?
+
+  assignedVehicleId String?
+  assignedVehicle   Vehicle? @relation(fields: [assignedVehicleId], references: [id])
+  assignedDriverId  String?
+  assignedDriver    Driver?  @relation(fields: [assignedDriverId], references: [id])
+  assignedStaffId   String?
+  assignedStaff     MedicalStaff? @relation(fields: [assignedStaffId], references: [id])
+
+  // Idempotency key from the client's offline-retry queue — prevents
+  // duplicate records if a submission succeeded but the response was lost
+  // on a bad connection.
+  clientRequestId String? @unique
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  history     EmergencyStatusHistory[]
+}
+
+model EmergencyStatusHistory {
+  id          String   @id @default(cuid())
+  emergency   EmergencyRequest @relation(fields: [emergencyId], references: [id])
+  emergencyId String
+  fromStatus  String?
+  toStatus    String
+  note        String?
+  createdAt   DateTime @default(now())
+}
+
+model Driver {
+  id             String   @id @default(cuid())
+  fullName       String
+  phone          String
+  licenseNumber  String
+  licenseExpiry  DateTime?
+  experienceYrs  Int?
+  status         String   @default("AVAILABLE")
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  vehicles       Vehicle[]
+  emergencies    EmergencyRequest[]
+}
+
+model Vehicle {
+  id                   String   @id @default(cuid())
+  internalCode         String   @unique // e.g. AMB-001, immutable
+  registrationNumber   String   // e.g. KL-01-AB-1234, editable independently
+  vehicleType          String?
+  model                String?
+  year                 Int?
+  status               String   @default("AVAILABLE")
+  insuranceExpiry      DateTime?
+  fitnessExpiry        DateTime?
+  pucExpiry            DateTime?
+  notes                String?
+
+  driverId             String?
+  driver               Driver?  @relation(fields: [driverId], references: [id])
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  emergencies          EmergencyRequest[]
+  staffAssignments     MedicalStaff[]
+}
+
+model MedicalStaff {
+  id            String   @id @default(cuid())
+  fullName      String
+  phone         String
+  qualification String?
+  role          String?
+  experienceYrs Int?
+  certification String?
+  status        String   @default("AVAILABLE")
+  notes         String?
+
+  vehicleId     String?
+  vehicle       Vehicle? @relation(fields: [vehicleId], references: [id])
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  emergencies   EmergencyRequest[]
+}
+
+model Settings {
+  id                String @id @default("singleton")
+  controlRoomPhone  String @default("+91XXXXXXXXXX")
+  orgName           String @default("Kerala Emergency Ambulance Service")
+  updatedAt         DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  adminId   String?
+  admin     Admin?   @relation(fields: [adminId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  meta      String?
+  createdAt DateTime @default(now())
+}
